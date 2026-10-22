@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { authApi, type Account, type User } from "../api/auth";
 import { clearSession, readSession, saveSession } from "./session";
 
@@ -17,6 +17,27 @@ const AuthContext = createContext<AuthState | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState(readSession);
 
+  // Identifies the signed-in user and their account to Pendo whenever the session starts or
+  // changes: after sign-in, on a reload that restores a saved session, and after a profile edit.
+  useEffect(() => {
+    if (!session) return;
+    const { user, account } = session;
+    pendo.identify({
+      visitor: {
+        id: user.id,
+        email: user.email,
+        full_name: user.name,
+        role: user.role,
+        accountId: user.accountId,
+      },
+      account: {
+        id: account.id,
+        name: account.name,
+        plan: account.plan,
+      },
+    });
+  }, [session]);
+
   const signIn = useCallback(async (email: string, password: string) => {
     const signedIn = await authApi.signIn(email, password);
     saveSession(signedIn);
@@ -29,6 +50,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } finally {
       clearSession();
       setSession(null);
+      // Starts Pendo over with a new anonymous visitor, so whoever signs in next on this
+      // browser isn't tracked as this user.
+      if (pendo.clearSession) {
+        pendo.clearSession();
+      }
     }
   }, []);
 
