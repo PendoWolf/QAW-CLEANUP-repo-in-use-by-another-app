@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { pendo } from "../analytics/pendo";
 import { usersApi } from "../api/users";
 import { useAuth } from "../auth/AuthContext";
 
@@ -19,7 +20,13 @@ export function AccountPage() {
     setSaving(true);
     setMessage(null);
     try {
-      updateUser(await usersApi.update(user.id, { name: name.trim(), email: email.trim() }));
+      const changes = { name: name.trim(), email: email.trim() };
+      updateUser(await usersApi.update(user.id, changes));
+      pendo.track("profile_updated", {
+        // Field names only: the name and email themselves are personal data.
+        changedFields: (["name", "email"] as const).filter((field) => changes[field] !== user[field]),
+        userRole: user.role,
+      });
       setMessage("Profile saved.");
     } catch (e) {
       setMessage((e as Error).message);

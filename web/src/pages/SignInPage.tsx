@@ -1,5 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
+import { pendo } from "../analytics/pendo";
+import { ApiError } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 
 /** Signs a user in with their email and password against the Tripwise API. */
@@ -12,7 +14,9 @@ export function SignInPage() {
   const [signingIn, setSigningIn] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const from = (location.state as { from?: string } | null)?.from ?? "/trips";
+  // The protected page RequireAuth sent the user here from, if it did.
+  const redirectedFrom = (location.state as { from?: string } | null)?.from;
+  const from = redirectedFrom ?? "/trips";
   if (user) {
     return <Navigate to={from} replace />;
   }
@@ -22,9 +26,20 @@ export function SignInPage() {
     setSigningIn(true);
     setError(null);
     try {
-      await signIn(email.trim(), password);
+      const session = await signIn(email.trim(), password);
+      pendo.track("user_signed_in", {
+        redirectedFrom,
+        userRole: session.user.role,
+        accountPlan: session.account.plan,
+      });
       navigate(from, { replace: true });
-    } catch {
+    } catch (e) {
+      // Never the email or password. errorStatus is left out when there was no HTTP error status,
+      // e.g. on a network error.
+      pendo.track("sign_in_failed", {
+        errorStatus: e instanceof ApiError ? e.status : undefined,
+        redirectedFrom,
+      });
       setError("That email and password don't match an account.");
     } finally {
       setSigningIn(false);

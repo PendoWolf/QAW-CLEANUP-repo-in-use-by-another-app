@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { pendo } from "../analytics/pendo";
+import { daysUntilStart, tripLengthDays } from "../analytics/trips";
 import { tripsApi, type NewTrip } from "../api/trips";
 import { TripForm } from "../components/TripForm";
 
@@ -11,7 +13,16 @@ export function NewTripPage() {
   const createTrip = async (trip: NewTrip) => {
     try {
       setError(null);
-      await tripsApi.create(trip);
+      const { id: tripId } = await tripsApi.create(trip);
+      pendo.track("trip_created", {
+        tripId,
+        destination: trip.destination,
+        travelers: trip.travelers,
+        startDate: trip.startDate,
+        endDate: trip.endDate,
+        tripLengthDays: tripLengthDays(trip),
+        daysUntilStart: daysUntilStart(trip),
+      });
       navigate("/trips");
     } catch (e) {
       setError((e as Error).message);

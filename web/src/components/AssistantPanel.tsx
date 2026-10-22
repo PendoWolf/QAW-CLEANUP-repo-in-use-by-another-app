@@ -1,11 +1,16 @@
 import { useState, type FormEvent } from "react";
+import { pendo } from "../analytics/pendo";
 import { sendAssistantMessage, type ChatMessage } from "../api/assistant";
+import { ApiError } from "../api/client";
 
 const SUGGESTED_PROMPTS = [
   "Suggest a 3-day itinerary for my next trip",
   "What should I pack for a week in Iceland?",
   "Find a cheaper alternative to Paris in spring",
 ];
+
+/** How the user sent a prompt: typed in the form, or by picking one of the SUGGESTED_PROMPTS. */
+type PromptSource = "typed" | "suggested";
 
 function newConversationId(): string {
   return crypto.randomUUID();
@@ -23,7 +28,7 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
   const [thinking, setThinking] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const send = async (text: string) => {
+  const send = async (text: string, promptSource: PromptSource) => {
     const prompt = text.trim();
     if (prompt === "" || thinking) return;
     const userMessage: ChatMessage = { id: crypto.randomUUID(), role: "user", content: prompt };
@@ -32,10 +37,30 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
     setDraft("");
     setError(null);
     setThinking(true);
+    // Used by the Track Events below, which send text lengths, never the text itself: it may be personal.
+    const turnNumber = conversation.filter((message) => message.role === "user").length;
+    const sentAt = performance.now();
     try {
       const reply = await sendAssistantMessage(conversationId, conversation);
+      pendo.track("assistant_reply_received", {
+        conversationId,
+        turnNumber,
+        promptSource,
+        suggestedPrompt: promptSource === "suggested" ? prompt : undefined,
+        promptLength: prompt.length,
+        replyLength: reply.message.content.length,
+        responseTimeMs: Math.round(performance.now() - sentAt),
+      });
       setMessages((current) => [...current, reply.message]);
     } catch (e) {
+      // errorStatus is left out when there was no HTTP error status, e.g. on a network error.
+      pendo.track("assistant_reply_failed", {
+        conversationId,
+        turnNumber,
+        promptSource,
+        errorStatus: e instanceof ApiError ? e.status : undefined,
+        responseTimeMs: Math.round(performance.now() - sentAt),
+      });
       setError((e as Error).message);
     } finally {
       setThinking(false);
@@ -44,7 +69,7 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    void send(draft);
+    void send(draft, "typed");
   };
 
   const startNewChat = () => {
@@ -73,7 +98,12 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
             Ask me anything about planning a trip.
             <div className="suggestions">
               {SUGGESTED_PROMPTS.map((prompt) => (
-                <button key={prompt} type="button" className="secondary" onClick={() => void send(prompt)}>
+                <button
+                  key={prompt}
+                  type="button"
+                  className="secondary"
+                  onClick={() => void send(prompt, "suggested")}
+                >
                   {prompt}
                 </button>
               ))}
