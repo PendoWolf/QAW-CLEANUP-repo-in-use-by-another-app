@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { authApi, type Account, type User } from "../api/auth";
 import { clearSession, readSession, saveSession } from "./session";
 
@@ -17,6 +17,28 @@ const AuthContext = createContext<AuthState | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState(readSession);
 
+  // Identifies the signed-in user and their account (company) to Pendo, after signing in
+  // and when a stored session is restored on load. A profile edit re-identifies them, so
+  // Pendo gets the new name and email.
+  useEffect(() => {
+    if (!session) return;
+    const { user, account } = session;
+    pendo.identify({
+      visitor: {
+        id: user.id,
+        email: user.email,
+        full_name: user.name,
+        role: user.role,
+        accountId: user.accountId,
+      },
+      account: {
+        id: account.id,
+        name: account.name,
+        plan: account.plan,
+      },
+    });
+  }, [session]);
+
   const signIn = useCallback(async (email: string, password: string) => {
     const signedIn = await authApi.signIn(email, password);
     saveSession(signedIn);
@@ -29,6 +51,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } finally {
       clearSession();
       setSession(null);
+      // Starts a fresh anonymous Pendo visitor, so the next user isn't tracked as this one.
+      // The snippet doesn't stub clearSession, so it's missing until the Pendo agent has
+      // loaded, and for good if the agent is blocked.
+      if (typeof pendo.clearSession === "function") {
+        pendo.clearSession();
+      }
     }
   }, []);
 
