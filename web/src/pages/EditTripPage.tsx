@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { daysUntilDeparture, pendo, tripLengthDays } from "../analytics/pendo";
 import { tripsApi, type NewTrip, type Trip } from "../api/trips";
 import { TripForm } from "../components/TripForm";
 
@@ -21,6 +22,17 @@ export function EditTripPage() {
     try {
       setError(null);
       await tripsApi.update(tripId, changes);
+      pendo.track("trip_updated", {
+        trip_id: tripId,
+        // The fields this save changed, compared with the trip as it was loaded.
+        changed_fields: (Object.keys(changes) as (keyof NewTrip)[]).filter(
+          (field) => changes[field] !== trip?.[field],
+        ),
+        destination: changes.destination,
+        travelers: changes.travelers,
+        trip_length_days: tripLengthDays(changes),
+        days_until_departure: daysUntilDeparture(changes),
+      });
       navigate("/trips");
     } catch (e) {
       setError((e as Error).message);
