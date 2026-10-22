@@ -1,5 +1,7 @@
 import { useState, type FormEvent } from "react";
+import { pendo } from "../analytics/pendo";
 import { sendAssistantMessage, type ChatMessage } from "../api/assistant";
+import { ApiError } from "../api/client";
 
 const SUGGESTED_PROMPTS = [
   "Suggest a 3-day itinerary for my next trip",
@@ -23,7 +25,7 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
   const [thinking, setThinking] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const send = async (text: string) => {
+  const send = async (text: string, source: "suggested" | "typed") => {
     const prompt = text.trim();
     if (prompt === "" || thinking) return;
     const userMessage: ChatMessage = { id: crypto.randomUUID(), role: "user", content: prompt };
@@ -32,10 +34,31 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
     setDraft("");
     setError(null);
     setThinking(true);
+    // How many prompts the user has sent in this conversation, this one included.
+    const turnNumber = conversation.filter((message) => message.role === "user").length;
+    const startedAt = performance.now();
     try {
       const reply = await sendAssistantMessage(conversationId, conversation);
       setMessages((current) => [...current, reply.message]);
+      // Lengths rather than text: prompts and replies may hold personal details.
+      pendo.track("assistant_reply_received", {
+        conversation_id: conversationId,
+        reply_message_id: reply.message.id,
+        turn_number: turnNumber,
+        prompt_source: source,
+        suggested_prompt: source === "suggested" ? prompt : undefined,
+        prompt_length: prompt.length,
+        reply_length: reply.message.content.length,
+        response_time_ms: Math.round(performance.now() - startedAt),
+      });
     } catch (e) {
+      pendo.track("assistant_reply_failed", {
+        conversation_id: conversationId,
+        turn_number: turnNumber,
+        prompt_source: source,
+        error_status: e instanceof ApiError ? e.status : undefined,
+        response_time_ms: Math.round(performance.now() - startedAt),
+      });
       setError((e as Error).message);
     } finally {
       setThinking(false);
@@ -44,7 +67,7 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    void send(draft);
+    void send(draft, "typed");
   };
 
   const startNewChat = () => {
@@ -73,7 +96,7 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
             Ask me anything about planning a trip.
             <div className="suggestions">
               {SUGGESTED_PROMPTS.map((prompt) => (
-                <button key={prompt} type="button" className="secondary" onClick={() => void send(prompt)}>
+                <button key={prompt} type="button" className="secondary" onClick={() => void send(prompt, "suggested")}>
                   {prompt}
                 </button>
               ))}
