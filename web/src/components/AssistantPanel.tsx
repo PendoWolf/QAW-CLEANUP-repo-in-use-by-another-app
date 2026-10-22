@@ -1,6 +1,9 @@
 import { useState, type FormEvent } from "react";
 import { sendAssistantMessage, type ChatMessage } from "../api/assistant";
 
+// The Tripwise Assistant's agent id in Pendo, sent with each pendo.trackAgent event.
+const PENDO_AGENT_ID = "ZgvKnp0QMLS5rTtsXMUlRi2S6dQ";
+
 const SUGGESTED_PROMPTS = [
   "Suggest a 3-day itinerary for my next trip",
   "What should I pack for a week in Iceland?",
@@ -14,7 +17,8 @@ function newConversationId(): string {
 /**
  * AI chat panel for the Tripwise Assistant, an LLM-powered travel agent.
  * Each prompt the user sends goes to the Tripwise API with the conversation so
- * far; the assistant's reply is appended when the API answers.
+ * far; the assistant's reply is appended when the API answers. Both are tracked
+ * in Pendo with pendo.trackAgent.
  */
 export function AssistantPanel({ onClose }: { onClose: () => void }) {
   const [conversationId, setConversationId] = useState(newConversationId);
@@ -23,7 +27,7 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
   const [thinking, setThinking] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const send = async (text: string) => {
+  const send = async (text: string, suggestedPrompt = false) => {
     const prompt = text.trim();
     if (prompt === "" || thinking) return;
     const userMessage: ChatMessage = { id: crypto.randomUUID(), role: "user", content: prompt };
@@ -32,9 +36,22 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
     setDraft("");
     setError(null);
     setThinking(true);
+    window.pendo?.trackAgent("prompt", {
+      agentId: PENDO_AGENT_ID,
+      conversationId,
+      messageId: userMessage.id,
+      content: userMessage.content,
+      suggestedPrompt,
+    });
     try {
       const reply = await sendAssistantMessage(conversationId, conversation);
       setMessages((current) => [...current, reply.message]);
+      window.pendo?.trackAgent("agent_response", {
+        agentId: PENDO_AGENT_ID,
+        conversationId,
+        messageId: reply.message.id,
+        content: reply.message.content,
+      });
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -73,7 +90,7 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
             Ask me anything about planning a trip.
             <div className="suggestions">
               {SUGGESTED_PROMPTS.map((prompt) => (
-                <button key={prompt} type="button" className="secondary" onClick={() => void send(prompt)}>
+                <button key={prompt} type="button" className="secondary" onClick={() => void send(prompt, true)}>
                   {prompt}
                 </button>
               ))}
